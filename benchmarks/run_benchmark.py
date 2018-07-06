@@ -4,7 +4,7 @@ from __future__ import print_function
 
 import os
 import argparse
-from subprocess import Popen, DEVNULL, TimeoutExpired, PIPE
+from subprocess import Popen, DEVNULL, TimeoutExpired
 
 parser = argparse.ArgumentParser(description='run benchmarks')
 parser.add_argument('--N', dest='n', default=1, nargs='?', type=int,
