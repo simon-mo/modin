@@ -11,8 +11,8 @@ import numpy as np
 import ray
 from warnings import warn
 
-from .utils import (_get_nan_block_id, extractor, _repartition_coord_df,
-                    _generate_blocks, _mask_block_partitions, writer,
+from .utils import (_get_nan_block_id, extractor,
+                    _generate_blocks, writer,
                     _blocks_to_series)
 from .index_metadata import _IndexMetadata
 from .dataframe import DataFrame
@@ -199,70 +199,6 @@ class _Location_Indexer_Base(object):
                 result_oid = extractor.remote(block_oid, row_idx, col_idx)
                 result_oids.append(result_oid)
         return result_oids
-
-    def _generate_view_copy(self, row_lookup, col_lookup):
-        """Generate a new DataFrame by making copies.
-
-        Note (simon):
-            - This is a temporary replacement for _generate_view
-              function below.
-        """
-        warn(_VIEW_IS_COPY_WARNING)
-
-        row_lookup_new = _repartition_coord_df(row_lookup, get_npartitions())
-        col_lookup_new = _repartition_coord_df(col_lookup, get_npartitions())
-
-        new_blocks = _generate_blocks(row_lookup, row_lookup_new, col_lookup,
-                                      col_lookup_new, self.block_oids)
-
-        row_lengths_oid = ray.put(np.bincount(row_lookup_new['partition']))
-        col_lengths_oid = ray.put(np.bincount(col_lookup_new['partition']))
-
-        new_row_metadata = _IndexMetadata(
-            coord_df_oid=row_lookup_new, lengths_oid=row_lengths_oid)
-
-        new_col_metadata = _IndexMetadata(
-            coord_df_oid=col_lookup_new, lengths_oid=col_lengths_oid)
-
-        df_view = DataFrame(
-            block_partitions=new_blocks,
-            row_metadata=new_row_metadata,
-            col_metadata=new_col_metadata,
-            index=row_lookup.index,
-            columns=col_lookup.index)
-
-        return df_view
-
-    def _generate_view(self, row_lookup, col_lookup):
-        """Generate a DataFrameView from lookup
-
-        Note (simon):
-            - This is not used because of index metadata was broken
-        """
-        row_lengths = [0] * len(self.df._row_metadata._lengths)
-        for i in row_lookup["partition"]:
-            row_lengths[i] += 1
-        col_lengths = [0] * len(self.df._col_metadata._lengths)
-        for i in col_lookup["partition"]:
-            col_lengths[i] += 1
-
-        row_lengths_oid = ray.put(np.array(row_lengths))
-        col_lengths_oid = ray.put(np.array(col_lengths))
-
-        row_metadata_view = _IndexMetadata(
-            coord_df_oid=row_lookup, lengths_oid=row_lengths_oid)
-
-        col_metadata_view = _IndexMetadata(
-            coord_df_oid=col_lookup, lengths_oid=col_lengths_oid)
-
-        df_view = DataFrameView(
-            block_partitions=self.block_oids,
-            row_metadata=row_metadata_view,
-            col_metadata=col_metadata_view,
-            index=row_metadata_view.index,
-            columns=col_metadata_view.index)
-
-        return df_view
 
     def __setitem__(self, row_lookup, col_lookup, item):
         """
@@ -498,29 +434,3 @@ class _iLoc_Indexer(_Location_Indexer_Base):
 
         if not any([is_int, is_int_slice, is_int_list, is_bool_arr]):
             raise ValueError(_ILOC_INT_ONLY_ERROR)
-
-
-class DataFrameView(DataFrame):
-    """A subclass of DataFrame where the index can be smaller than blocks.
-
-    Deprecated because _generate_view_copy is used instead of _generate_view
-    """
-
-    def __init__(self, block_partitions, row_metadata, col_metadata, index,
-                 columns):
-        self._block_partitions = block_partitions
-        self._row_metadata = row_metadata
-        self._col_metadata = col_metadata
-        self.index = index
-        self.columns = columns
-
-    def _get_block_partitions(self):
-        oid_arr = _mask_block_partitions(self._block_partitions_data,
-                                         self._row_metadata,
-                                         self._col_metadata)
-        return oid_arr
-
-    def _set_block_partitions(self, new_block_partitions):
-        self._block_partitions_data = new_block_partitions
-
-    _block_partitions = property(_get_block_partitions, _set_block_partitions)

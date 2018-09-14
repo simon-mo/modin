@@ -49,6 +49,14 @@ class RemotePartition(object):
         """
         raise NotImplementedError("Must be implemented in child class")
 
+    def add_to_apply_calls(self, func, **kwargs):
+        """Add the function to the apply function call stack.
+
+        This function will be executed when apply is called. It will be executed
+        in the order inserted; apply's func operates the last and return
+        """
+        raise NotImplementedError("Must be implemented in child class")
+
     def to_pandas(self):
         """Convert the object stored in this partition to a Pandas DataFrame.
 
@@ -135,6 +143,7 @@ class RayRemotePartition(RemotePartition):
         assert type(object_id) is ray.ObjectID
 
         self.oid = object_id
+        self.call_queue = []
 
     def get(self):
         """Gets the object out of the plasma store.
@@ -157,8 +166,31 @@ class RayRemotePartition(RemotePartition):
         Returns:
             A RayRemotePartition object.
         """
-        new_oid = deploy_ray_func.remote(func, self.oid, kwargs)
-        return RayRemotePartition(new_oid)
+        oid = self.oid
+        self.call_queue.append((func, kwargs))
+
+        def call_queue_closure(oid_obj, call_queues):
+            for func, kwargs in call_queues:
+                try:
+                    oid_obj = func(oid_obj, **kwargs)
+                except TypeError:
+                    #TODO(simon): remove debugging line
+                    print(call_queues)
+                    print(ray.get(func))
+            return oid_obj
+
+        oid = deploy_ray_func.remote(call_queue_closure, oid, {'call_queues': self.call_queue})
+        self.call_queue = []
+
+        return RayRemotePartition(oid)
+
+
+    def add_to_apply_calls(self, func, **kwargs):
+        self.call_queue.append((func, kwargs))
+
+
+    def __copy__(self):
+        return RayRemotePartition(object_id=self.oid)
 
     def to_pandas(self):
         """Convert the object stored in this partition to a Pandas DataFrame.

@@ -2,11 +2,13 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+from typing import List, Tuple
+
 import numpy as np
 import ray
 import pandas
 
-from .remote_partition import RayRemotePartition
+from .remote_partition import RayRemotePartition, RemotePartition
 from .axis_partition import RayColumnPartition, RayRowPartition
 from .utils import compute_chunksize
 
@@ -120,6 +122,11 @@ class BlockPartitions(object):
             self._widths_cache = [obj.width().get() for obj in self.partitions[0]]
         return self._widths_cache
 
+    @property
+    def shape(self) -> Tuple[int, int]:
+        print(self.block_widths, self.block_lengths)
+        return np.sum(self.block_lengths), np.sum(self.block_widths)
+
     def full_reduce(self, map_func, reduce_func, axis):
         """Perform a full reduce on the data.
 
@@ -172,6 +179,15 @@ class BlockPartitions(object):
         preprocessed_map_func = self.preprocess_func(map_func)
         new_partitions = np.array([[part.apply(preprocessed_map_func) for part in row_of_parts] for row_of_parts in self.partitions])
         return cls(new_partitions)
+
+    def lazy_map_across_blocks(self, map_func, kwargs):
+        cls = type(self)
+        preprocessed_map_func = self.preprocess_func(map_func)
+        new_partitions = np.array(
+                            [[part.add_to_apply_calls(preprocessed_map_func, kwargs) for part in row_of_parts]
+                             for row_of_parts in self.partitions])
+        return cls(new_partitions)
+
 
     def map_across_full_axis(self, axis, map_func):
         """Applies `map_func` to every partition.
@@ -632,6 +648,34 @@ class BlockPartitions(object):
                 result = np.array([partitions_for_remaining[i] if i not in partitions_dict else partitions_for_apply[i].apply(preprocessed_func, internal_indices=partitions_dict[i]) for i in range(len(partitions_for_remaining))])
 
         return cls(result.T) if not axis else cls(result)
+
+
+    def apply_func_to_indices_both_axis(self, func, row_indices, col_indices, lazy=False):
+        """
+        Apply a function to along both axis
+
+        Important: For your func to operate directly on the indices provided,
+            it must use `row_internal_indices, col_internal_indices` as keyword arguments.
+        """
+        cls = type(self)
+
+        partition_copy = self.partitions.copy()
+        for row_blk_idx, row_internal_idx in self._get_dict_of_block_index(0, row_indices):
+            for col_blk_idx, col_internal_idx in self._get_dict_of_block_index(1, col_indices):
+                remote_part: RemotePartition = partition_copy[row_blk_idx, col_blk_idx]
+                if lazy:
+                    result = remote_part.add_to_apply_calls(func,
+                                                       row_internal_indices=row_internal_idx,
+                                                       col_internal_indices=col_internal_idx)
+                else:
+                    result = remote_part.apply(func,
+                                                row_internal_indices=row_internal_idx,
+                                                col_internal_indices=col_internal_idx)
+                partition_copy[row_blk_idx, col_blk_idx] = result
+
+        return cls(partition_copy)
+
+
 
     def inter_data_operation(self, axis, func, other):
         """Apply a function that requires two BlockPartitions objects.

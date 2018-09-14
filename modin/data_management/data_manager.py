@@ -19,7 +19,8 @@ class PandasDataManager(object):
         with a Pandas backend. This logic is specific to Pandas.
     """
 
-    def __init__(self, block_partitions_object, index, columns, dtypes=None):
+    def __init__(self, block_partitions_object: BlockPartitions,
+                 index: pandas.Index, columns: pandas.Index, dtypes=None):
         assert isinstance(block_partitions_object, BlockPartitions)
         self.data = block_partitions_object
         self.index = index
@@ -1487,3 +1488,58 @@ class PandasDataManager(object):
         result_data = self.map_across_full_axis(axis, func_prepared)
         return self._post_process_apply(result_data, axis, try_scale=False)
     # END Manual Partitioning methods
+
+class PandasDataManagerView(PandasDataManager):
+    """
+    This class represent a view of the PandasDataManager
+
+    In particular, the following constraints are broken:
+    - (len(self.index), len(self.columns)) != self.data.shape
+    """
+
+    def __init__(self,
+                 block_partitions_object: BlockPartitions,
+                 index: pandas.Index,
+                 columns: pandas.Index,
+                 dtypes=None,
+                 index_map_series: pandas.Series=None,
+                 columns_map_series: pandas.Series=None):
+        """
+        :param index_map_series: a Pandas Series Object mapping user-facing index to numeric index.
+        :param columns_map_series: np.array(bool) mask over numeric index.
+        """
+        assert index_map_series is not None
+        assert columns_map_series is not None
+        assert (len(index_map_series), len(columns_map_series)) == block_partitions_object.shape
+        assert index == index_map_series.index
+        assert columns == columns_map_series.index
+
+        self.index_map = index_map_series
+        self.columns_map = columns_map_series
+
+        super(PandasDataManagerView).__init__(block_partitions_object, index, columns, dtypes)
+
+
+    def _get_data(self) -> BlockPartitions:
+        """
+        Perform the map step
+        :return:
+        """
+        def iloc(partition, row_internal_indices, col_internal_indices):
+            return partition.iloc[row_internal_indices, col_internal_indices]
+
+        masked_data = self.data.apply_func_to_indices_both_axis(func=iloc,
+                                                                  row_indices=self.index_map.values(),
+                                                                  col_indices=self.columns_map.values(),
+                                                                  lazy=True)
+
+        print("Mask data called")
+        return masked_data
+
+
+    def _set_data(self, new_data):
+        """Note this setter will be called by the `super(PandasDataManagerView).__init__` function"""
+        self.data = new_data
+
+
+    data = property(_get_data, _set_data)
