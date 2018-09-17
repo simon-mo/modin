@@ -158,11 +158,11 @@ class PandasDataManager(object):
     # Metadata modification methods
     def add_prefix(self, prefix):
         new_column_names = self.columns.map(lambda x: str(prefix) + str(x))
-        return self.clone(self.data, self.index, new_column_names, self.dtypes_cache)
+        return self.clone(self.data, self.index, new_column_names, self._dtype_cache)
 
     def add_suffix(self, suffix):
         new_column_names = self.columns.map(lambda x: str(x) + str(suffix))
-        return self.clone(self.data, self.index, new_column_names, self.dtypes_cache)
+        return self.clone(self.data, self.index, new_column_names, self._dtype_cache)
     # END Metadata modification methods
 
     # Copy
@@ -170,7 +170,7 @@ class PandasDataManager(object):
     # copies if we end up modifying something here. We copy all of the metadata
     # to prevent that.
     def copy(self):
-        return self.clone(self.data.copy(), self.index.copy(), self.columns.copy(), self.dtypes_cache)
+        return self.clone(self.data.copy(), self.index.copy(), self.columns.copy(), self._dtype_cache)
 
     # Append/Concat/Join (Not Merge)
     # The append/concat/join operations should ideally never trigger remote
@@ -481,8 +481,6 @@ class PandasDataManager(object):
 
     # Reindex/reset_index (may shuffle data)
     def reindex(self, axis, labels, **kwargs):
-
-
         # To reindex, we need a function that will be shipped to each of the
         # partitions.
         def reindex_builer(df, axis, old_labels, new_labels, **kwargs):
@@ -513,7 +511,6 @@ class PandasDataManager(object):
         # assumes identical partitioning. Internally, we *may* change the
         # partitioning during a map across a full axis.
         new_data = self.map_across_full_axis(axis, func)
-        print(new_data)
         return self.clone(new_data, new_index, new_columns)
 
     def reset_index(self, **kwargs):
@@ -1596,11 +1593,13 @@ class PandasDataManagerView(PandasDataManager):
         def iloc(partition, row_internal_indices, col_internal_indices):
             return partition.iloc[row_internal_indices, col_internal_indices]
 
+
         masked_data = self.parent_data.apply_func_to_indices_both_axis(func=iloc,
                                                                        row_indices=self.index_map.values,
                                                                        col_indices=self.columns_map.values,
                                                                        lazy=True,
                                                                        keep_remaining=False)
+
         return masked_data
 
 

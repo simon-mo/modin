@@ -701,11 +701,8 @@ class BlockPartitions(object):
 
         column_idx = np.where(np.any(operation_mask, axis=0))[0]
         row_idx = np.where(np.any(operation_mask, axis=1))[0]
-
         if not keep_remaining:
             partition_copy = partition_copy[row_idx][:, column_idx]
-
-        pandas.DEBUG = partition_copy
 
         return cls(partition_copy)
 
