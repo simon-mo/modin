@@ -9,14 +9,11 @@ import inspect
 from io import BytesIO
 import os
 import py
-from pyarrow.parquet import ParquetFile
-import pyarrow.parquet as pq
 import re
 import warnings
 import numpy as np
 
 from .dataframe import ray, DataFrame
-from . import get_npartitions
 from .utils import from_pandas
 from ..data_management.partitioning.partition_collections import RayBlockPartitions
 from ..data_management.partitioning.remote_partition import RayRemotePartition
@@ -46,6 +43,8 @@ def read_parquet(path, engine='auto', columns=None, **kwargs):
 
 
 def _read_parquet_pandas_on_ray(path, engine, columns, **kwargs):
+    from pyarrow.parquet import ParquetFile
+
     if not columns:
         pf = ParquetFile(path)
         columns = [
@@ -118,7 +117,7 @@ def _skip_header(f, kwargs={}):
     return lines_read
 
 
-def _read_csv_from_file_pandas_on_ray(filepath, npartitions, kwargs={}):
+def _read_csv_from_file_pandas_on_ray(filepath, kwargs={}):
     """Constructs a DataFrame from a CSV file.
 
     Args:
@@ -155,8 +154,8 @@ def _read_csv_from_file_pandas_on_ray(filepath, npartitions, kwargs={}):
         partition_ids = []
         index_ids = []
         total_bytes = os.path.getsize(filepath)
-        chunk_size = max(1, (total_bytes - f.tell()) // npartitions)
         num_splits = min(len(column_names), RayBlockPartitions._compute_num_partitions())
+        chunk_size = max(1, (total_bytes - f.tell()) // num_splits)
 
         while f.tell() < total_bytes:
             start = f.tell()
@@ -325,7 +324,7 @@ def read_csv(filepath_or_buffer,
                       PendingDeprecationWarning)
         return _read_csv_from_pandas(filepath_or_buffer, kwargs)
 
-    return _read_csv_from_file_pandas_on_ray(filepath_or_buffer, get_npartitions(), kwargs)
+    return _read_csv_from_file_pandas_on_ray(filepath_or_buffer, kwargs)
 
 
 def read_json(path_or_buf=None,
@@ -558,6 +557,7 @@ def _read_csv_with_offset_pandas_on_ray(fname, num_splits, start, end, kwargs, h
 
 @ray.remote
 def _read_parquet_column(path, column, num_splits, kwargs={}):
+    import pyarrow.parquet as pq
     df = pq.read_pandas(path, columns=[column], **kwargs).to_pandas()
     # Append the length of the index here to build it externally
     return split_result_of_axis_func_pandas(0, num_splits, df) + [len(df.index)]
