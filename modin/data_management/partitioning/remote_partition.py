@@ -136,6 +136,10 @@ class RemotePartition(object):
             self._width_cache = self.apply(preprocessed_func)
         return self._width_cache
 
+    @classmethod
+    def empty(cls):
+        raise NotImplementedError("To be implemented in the child class!")
+
 
 class RayRemotePartition(RemotePartition):
 
@@ -151,6 +155,9 @@ class RayRemotePartition(RemotePartition):
         Returns:
             The object from the plasma store.
         """
+        if len(self.call_queue):
+            return self.apply(lambda x: x).get()
+
         return ray.get(self.oid)
 
     def apply(self, func, **kwargs):
@@ -170,16 +177,18 @@ class RayRemotePartition(RemotePartition):
         self.call_queue.append((func, kwargs))
 
         def call_queue_closure(oid_obj, call_queues):
+
             for func, kwargs in call_queues:
-                try:
-                    oid_obj = func(oid_obj, **kwargs)
-                except TypeError:
-                    #TODO(simon): remove debugging line
-                    print(call_queues)
-                    print(ray.get(func))
+                if isinstance(func, ray.ObjectID):
+                    func = ray.get(func)
+                if isinstance(kwargs, ray.ObjectID):
+                    kwargs = ray.get(kwargs)
+
+                oid_obj = func(oid_obj, **kwargs)
+
             return oid_obj
 
-        oid = deploy_ray_func.remote(call_queue_closure, oid, {'call_queues': self.call_queue})
+        oid = deploy_ray_func.remote(call_queue_closure, oid, kwargs={'call_queues': self.call_queue})
         self.call_queue = []
 
         return RayRemotePartition(oid)
@@ -187,6 +196,7 @@ class RayRemotePartition(RemotePartition):
 
     def add_to_apply_calls(self, func, **kwargs):
         self.call_queue.append((func, kwargs))
+        return self
 
 
     def __copy__(self):
@@ -234,6 +244,10 @@ class RayRemotePartition(RemotePartition):
     @classmethod
     def width_extraction_fn(cls):
         return width_fn_pandas
+
+    @classmethod
+    def empty(cls):
+        return cls.put(pandas.DataFrame())
 
 
 def length_fn_pandas(df):

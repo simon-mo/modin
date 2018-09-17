@@ -124,8 +124,7 @@ class BlockPartitions(object):
 
     @property
     def shape(self) -> Tuple[int, int]:
-        print(self.block_widths, self.block_lengths)
-        return np.sum(self.block_lengths), np.sum(self.block_widths)
+        return int(np.sum(self.block_lengths)), int(np.sum(self.block_widths))
 
     def full_reduce(self, map_func, reduce_func, axis):
         """Perform a full reduce on the data.
@@ -650,7 +649,9 @@ class BlockPartitions(object):
         return cls(result.T) if not axis else cls(result)
 
 
-    def apply_func_to_indices_both_axis(self, func, row_indices, col_indices, lazy=False):
+    def apply_func_to_indices_both_axis(self, func, row_indices, col_indices,
+                                        lazy=False, keep_remaining=True, mutate=False,
+                                        item_to_distribute=None):
         """
         Apply a function to along both axis
 
@@ -659,22 +660,54 @@ class BlockPartitions(object):
         """
         cls = type(self)
 
-        partition_copy = self.partitions.copy()
-        for row_blk_idx, row_internal_idx in self._get_dict_of_block_index(0, row_indices):
-            for col_blk_idx, col_internal_idx in self._get_dict_of_block_index(1, col_indices):
-                remote_part: RemotePartition = partition_copy[row_blk_idx, col_blk_idx]
+        if not mutate:
+            partition_copy = self.partitions.copy()
+        else:
+            partition_copy = self.partitions
+
+        operation_mask = np.full(self.partitions.shape, False)
+
+        row_position_counter = 0
+        for row_blk_idx, row_internal_idx in self._get_dict_of_block_index(1, row_indices).items():
+            col_position_counter = 0
+            for col_blk_idx, col_internal_idx in self._get_dict_of_block_index(0, col_indices).items():
+                remote_part = partition_copy[row_blk_idx, col_blk_idx]
+
+                if item_to_distribute is not None:
+                    item = item_to_distribute[
+                             row_position_counter:row_position_counter+len(row_internal_idx),
+                             col_position_counter:col_position_counter+len(col_internal_idx)
+                             ]
+                    item = {'item': item}
+                else:
+                    item = dict()
+
                 if lazy:
                     result = remote_part.add_to_apply_calls(func,
-                                                       row_internal_indices=row_internal_idx,
-                                                       col_internal_indices=col_internal_idx)
+                                                            row_internal_indices=row_internal_idx,
+                                                            col_internal_indices=col_internal_idx,
+                                                            **item)
                 else:
                     result = remote_part.apply(func,
                                                 row_internal_indices=row_internal_idx,
-                                                col_internal_indices=col_internal_idx)
+                                                col_internal_indices=col_internal_idx,
+                                                **item)
+
                 partition_copy[row_blk_idx, col_blk_idx] = result
+                operation_mask[row_blk_idx, col_blk_idx] = True
+
+                col_position_counter += len(col_internal_idx)
+            row_position_counter += len(row_internal_idx)
+
+        column_idx = np.where(np.any(operation_mask, axis=0))[0]
+        row_idx = np.where(np.any(operation_mask, axis=1))[0]
+
+        if not keep_remaining:
+            partition_copy = partition_copy[row_idx][:, column_idx]
+
+        pandas.DEBUG = partition_copy
 
         return cls(partition_copy)
-
 
 
     def inter_data_operation(self, axis, func, other):
@@ -729,6 +762,28 @@ class BlockPartitions(object):
 
     def __len__(self):
         return sum(self.block_lengths)
+
+    def enlarge_partitions(self, n_rows=None, n_cols=None):
+        from ...pandas.utils import _get_nan_block_id
+        # import here to avoid circular import
+
+        data = self.partitions
+        block_partitions_cls = type(self)
+
+        if n_rows:
+            n_cols_lst = self.block_widths
+            nan_oids_lst = [self._partition_class(_get_nan_block_id(n_rows, n_cols_)) for n_cols_ in n_cols_lst]
+            new_chunk = block_partitions_cls(np.array([nan_oids_lst]))
+            data = self.concat(axis=0, other_blocks=new_chunk)
+
+        if n_cols:
+            n_rows_lst = self.block_lengths
+            nan_oids_lst = [self._partition_class(_get_nan_block_id(n_rows_, n_cols)) for n_rows_ in n_rows_lst]
+            new_chunk = block_partitions_cls(np.array([nan_oids_lst]).T)
+            data = self.concat(axis=1, other_blocks=new_chunk)
+
+        return data
+
 
 
 class RayBlockPartitions(BlockPartitions):

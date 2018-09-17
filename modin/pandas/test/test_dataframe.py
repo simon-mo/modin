@@ -3499,6 +3499,12 @@ def test_loc(ray_df, pd_df):
     assert ray_df_equals_pandas(ray_df.loc[1:2, 'col1':'col2'],
                                 pd_df.loc[1:2, 'col1':'col2'])
 
+    # Write Item
+    ray_df_copy = ray_df.copy()
+    pd_df_copy = pd_df.copy()
+    ray_df_copy.loc[[1, 2]] = 42
+    pd_df_copy.loc[[1,2]] = 42
+    assert ray_df_equals_pandas(ray_df_copy, pd_df_copy)
 
 def test_is_copy():
     ray_df = create_test_dataframe()
@@ -3543,6 +3549,13 @@ def test_iloc(ray_df, pd_df):
 
     # Issue #43
     ray_df.iloc[0:3, :]
+
+    # Write Item
+    ray_df_copy = ray_df.copy()
+    pd_df_copy = pd_df.copy()
+    ray_df_copy.iloc[[1, 2]] = 42
+    pd_df_copy.iloc[[1,2]] = 42
+    assert ray_df_equals_pandas(ray_df_copy, pd_df_copy)
 
 
 def test__doc__():
